@@ -1798,5 +1798,252 @@ right outer.
 необязательным словом, так что его можно и не использовать, но автор так делать
 не рекомендует.
 
-### Трехсторонние внешние соединения
+### Трехсторонние внешние соединения.
+
+Возможно соединять и более двух таблиц используя внешнее соединение. Чтобы к
+предыдущему запросу пристыковать еще и колонку последнего взятия фильма в
+прокат, присоединим и таблицу rental:
+
+```
+mysql> select f.film_id, f.title, count(i.inventory_id), max(r.rental_date) from film f left join inventory i using (film_id) left join rental r using (inventory_id) group by f.film_id having f.film_id between 13 and 15; 
++---------+----------------+-----------------------+---------------------+
+| film_id | title          | count(i.inventory_id) | max(r.rental_date)  |
++---------+----------------+-----------------------+---------------------+
+|      13 | ALI FOREVER    |                     9 | 2006-02-14 15:16:03 |
+|      14 | ALICE FANTASIA |                     0 | NULL                |
+|      15 | ALIEN CENTER   |                    22 | 2005-08-23 19:21:22 |
++---------+----------------+-----------------------+---------------------+
+```
+
+Таким образом мы все состыковали, и получили интересующий нас результат.
+
+### Перекрестные соединения.
+
+Перекрестное соединение представляет собой декартово произведения. То все
+возможные комбинации значений из таблиц. Продемонстрировать это стоит на простом
+примере. Пусть есть таблицы t1 и t2. В таблице t1 хранятся значения 1, 2 и 3, а
+в таблице t2 4, 5 и 6. Соединим их через cross join:
+
+```
+mysql> select * from t1 cross join t2 order by t1.value, t2.value;
++-------+-------+
+| value | value |
++-------+-------+
+|     1 |     4 |
+|     1 |     5 |
+|     1 |     6 |
+|     2 |     4 |
+|     2 |     5 |
+|     2 |     6 |
+|     3 |     4 |
+|     3 |     5 |
+|     3 |     6 |
++-------+-------+
+9 rows in set (0.00 sec)
+```
+
+Чего и следовало ожидать, результирующий набор состоит из всех возможных
+комбинаций значений таблиц t1 и t2.
+
+Обычно говорят, будто перекрсестное соединение не особо полезно. Но Алан Болье
+утверждает об обратном. Ранее мы уже использовали запрос для генерации таблицы с
+тремя строками, представляющей собой категории клиентов. Вот этот запрос:
+
+```
+mysql> select 'Small Fry' name, 0 low_limit, 74.99 high_limit union select 'Average Joes' name, 75 low_limit, 149.99 high_limit union select 'Heave Hitters' name, 150 low_limit, 9999999.99 high_limit;
++---------------+-----------+------------+
+| name          | low_limit | high_limit |
++---------------+-----------+------------+
+| Small Fry     |         0 |      74.99 |
+| Average Joes  |        75 |     149.99 |
+| Heave Hitters |       150 | 9999999.99 |
++---------------+-----------+------------+
+```
+
+А что, если мы хотим провернуть подобный трюк, но создать таблицу с днями года?
+В таком случае придется писать запрос на более чем три сотни строк, а это
+утомительно. Вместо мы можем воспользоваться перекрестным соединением:
+
+```
+select ones.num + tens.num + hundreds.num days
+from
+(select 0 num union
+select 1 num union
+select 2 num union
+select 3 num union
+select 4 num union
+select 5 num union
+select 6 num union
+select 7 num union
+select 8 num union
+select 9 num) ones
+cross join
+(select 0 num union
+select 10 num union
+select 20 num union
+select 30 num union
+select 40 num union
+select 50 num union
+select 60 num union
+select 70 num union
+select 80 num union
+select 90 num) tens
+cross join
+(select 0 num union
+select 100 num union
+select 200 num union
+select 300 num) hundreds
+order by days;
+```
+
+Этот запрос вернет таблицу с одной колонкой days, в которой будут числа от 0 до
+399. (10 возможных значений единиц * 10 возможных значений десятков * 4
+возможных значений сотен = 400 значений).
+
+Далее необходимо от набора чисел перейти к набору дат. А этого можно добиться
+через применение функции date_add(), прибавляя числа к фиксированной дате,
+например к 2021 году:
+
+```
+select date_add('2021-01-01', interval (ones.num + tens.num + hundreds.num) day) dt
+from
+(select 0 num union
+select 1 num union
+select 2 num union
+select 3 num union
+select 4 num union
+select 5 num union
+select 6 num union
+select 7 num union
+select 8 num union
+select 9 num) ones
+cross join
+(select 0 num union
+select 10 num union
+select 20 num union
+select 30 num union
+select 40 num union
+select 50 num union
+select 60 num union
+select 70 num union
+select 80 num union
+select 90 num) tens
+cross join
+(select 0 num union
+select 100 num union
+select 200 num union
+select 300 num) hundreds
+where date_add('2021-01-01', interval (ones.num + tens.num + hundreds.num) day) < '2022-01-01'
+order by 1;
+```
+
+Этот запрос вернет таблицу, состоящую из дат за 2021 год. Автор содержит в тайне
+правила синтаксиса для применения функции date_add, ну да ладно.
+
+А что теперь с этим делать? А можно составить запрос, возвращающий информацию о
+том, сколько фильмов в какой день было взято. Для этого нужно произвести внешнее
+соединение с таблицей rental, сгруппировать по дням и посчитать число
+rental_date.
+
+```
+select date_t.dt, count(rental.rental_date) from rental
+right join
+(select date_add('2005-01-01', interval (ones.num + tens.num + hundreds.num) day) dt
+from
+(select 0 num union
+select 1 num union
+select 2 num union
+select 3 num union
+select 4 num union
+select 5 num union
+select 6 num union
+select 7 num union
+select 8 num union
+select 9 num) ones
+cross join
+(select 0 num union
+select 10 num union
+select 20 num union
+select 30 num union
+select 40 num union
+select 50 num union
+select 60 num union
+select 70 num union
+select 80 num union
+select 90 num) tens
+cross join
+(select 0 num union
+select 100 num union
+select 200 num union
+select 300 num) hundreds
+where date_add('2005-01-01', interval (ones.num + tens.num + hundreds.num) day) < '2006-01-01') date_t
+on date(rental.rental_date) = date_t.dt
+group by date_t.dt
+```
+
+### Естественные соединения.
+
+При использовании естественного соединения забота о том, как соединить таблицы
+целиком и полностью основывается на СУБД. Ключевым словом для такого соединения
+выступает natural join. Естественное соединение основывается идентичности имен
+столбцов в нескольких таблицах. К примеру, в таблице rental есть столбец
+customer_id, выступающий внешним ключом к таблице customer, где имеется
+одноименный столбец, но выступающий уже в роли первичного ключа. А это
+предоставляет возможность произвести естественное соединение:
+
+```
+mysql> select c.first_name, date(r.rental_date) from customer c natural join rental r;  
+Empty set (0.04 sec)
+```
+
+Случилось что- то непонятное. Почему вернулся пустой набор? А ответ заключается
+в том, что и в таблице customer, и в таблице rental присутствует по столбцу
+last_update:
+
+```
+mysql> desc customer;
++-------------+-------------------+------+-----+-------------------+-----------------------------------------------+
+| Field       | Type              | Null | Key | Default           | Extra                                         |
++-------------+-------------------+------+-----+-------------------+-----------------------------------------------+
+| customer_id | smallint unsigned | NO   | PRI | NULL              | auto_increment                                |
+| store_id    | tinyint unsigned  | NO   | MUL | NULL              |                                               |
+| first_name  | varchar(45)       | NO   |     | NULL              |                                               |
+| last_name   | varchar(45)       | NO   | MUL | NULL              |                                               |
+| email       | varchar(50)       | YES  |     | NULL              |                                               |
+| address_id  | smallint unsigned | NO   | MUL | NULL              |                                               |
+| active      | tinyint(1)        | NO   |     | 1                 |                                               |
+| create_date | datetime          | NO   |     | NULL              |                                               |
+| last_update | timestamp         | YES  |     | CURRENT_TIMESTAMP | DEFAULT_GENERATED on update CURRENT_TIMESTAMP |
++-------------+-------------------+------+-----+-------------------+-----------------------------------------------+
+mysql> desc rental;
++--------------+--------------------+------+-----+-------------------+-----------------------------------------------+
+| Field        | Type               | Null | Key | Default           | Extra                                         |
++--------------+--------------------+------+-----+-------------------+-----------------------------------------------+
+| rental_id    | int                | NO   | PRI | NULL              | auto_increment                                |
+| rental_date  | datetime           | NO   | MUL | NULL              |                                               |
+| inventory_id | mediumint unsigned | NO   | MUL | NULL              |                                               |
+| customer_id  | smallint unsigned  | NO   | MUL | NULL              |                                               |
+| return_date  | datetime           | YES  |     | NULL              |                                               |
+| staff_id     | tinyint unsigned   | NO   | MUL | NULL              |                                               |
+| last_update  | timestamp          | NO   |     | CURRENT_TIMESTAMP | DEFAULT_GENERATED on update CURRENT_TIMESTAMP |
++--------------+--------------------+------+-----+-------------------+-----------------------------------------------+
+```
+
+СУБД производит объединение по customer_id, но также объединяет и по
+last_update. По- сути делает это:
+
+```
+mysql> select c.first_name, date(r.rental_date) from customer c inner join rental r on c.customer_id = r.customer_id and r.last_update = c.last_update; 
+Empty set (0.02 sec)
+```
+
+Единственным способом, позволяющим обойти такое огранчиение выступает
+возможность ограничить столбцы как минимум в одной таблице, к примеру, через подзапрос:
+
+```
+mysql> select c.first_name, date(sr.rental_date) from customer c natural join (select rental_date, customer_id from rental) sr;
+```
+
+К счастью, Алан Болье глумится над этим способом соединения и призывает
+использовать внутреннее соединение.
 
